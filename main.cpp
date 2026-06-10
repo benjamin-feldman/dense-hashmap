@@ -98,7 +98,7 @@ void tests()
     assert(h.get(1) == 2);
     assert(h.get(2) == 4);
     h.set(0, 20);
-    assert(h.get(0) == 2` ` 0);
+    assert(h.get(0) == 20);
     try {
         h.get(42);
     } catch (std::exception& e) {
