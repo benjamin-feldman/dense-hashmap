@@ -13,7 +13,7 @@ struct DenseMap {
         bool used = false;
     };
 
-    DenseMap(unsigned int nBuckets = 4, unsigned int bucket_size = 2)
+    DenseMap(unsigned int nBuckets = 4, unsigned int bucket_size = 64)
         : nBuckets { nBuckets }
         , loadFactor { 0.0f }
         , items { std::vector<Node>(nBuckets * bucket_size) }
