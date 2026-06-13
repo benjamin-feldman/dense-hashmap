@@ -1,41 +1,84 @@
 #include <cassert>
+#include <cmath>
 #include <cstddef>
+#include <cstdio>
 #include <functional>
-#include <string>
+#include <limits>
+#include <stdexcept>
 #include <vector>
 
 template <typename Key, typename Value>
 struct DenseMap {
+    static constexpr std::size_t npos = std::numeric_limits<std::size_t>::max();
+
     struct Node {
         Key key { };
         Value value { };
-        int nextIdx = -1;
+        std::size_t nextIdx = npos;
         bool used = false;
     };
 
-    explicit DenseMap(const unsigned int nBuckets = 4)
-        : nBuckets { nBuckets }
-        , loadFactor { .75f }
-        , items { std::vector<Node>(vec_size(nBuckets, loadFactor)) }
-        , bucketToStartIdx { std::vector<int>(nBuckets) }
+    explicit DenseMap(const std::size_t bucket_count = 4)
+        : bucket_count_ { bucket_count }
+        , items { std::vector<Node>(vec_size(bucket_count, max_load_factor_)) }
+        , bucket_heads_ { std::vector<std::size_t>(bucket_count, npos) }
     {
-        for (size_t i { }; i < nBuckets; ++i) {
-            bucketToStartIdx[i] = -1;
+        if (bucket_count < 1) {
+            throw std::invalid_argument("Cannot initialize the DenseMap with no buckets.");
         }
     }
 
-    void _set(const Key& k, const Value& v)
+    void set(const Key& k, const Value& v)
     {
-        const int bucketIdx = hash(k) % nBuckets;
-        int idx = bucketToStartIdx[bucketIdx];
+        check_load_factor();
+        set_impl(k, v);
+    }
 
-        if (idx == -1) {
-            idx = ++lastUsedIdx;
-            bucketToStartIdx[bucketIdx] = idx;
+    [[nodiscard]] const Value& get(const Key& k) const
+    {
+        const std::size_t bucketIdx = hash(k) % bucket_count_;
+        std::size_t idx = bucket_heads_[bucketIdx];
+
+        while (idx != npos) {
+            const Node& node = items[idx];
+            if (node.key == k && node.used) {
+                return node.value;
+            }
+            idx = node.nextIdx;
+        }
+        throw std::out_of_range("Key not present in DenseMap.");
+    }
+
+private:
+    static constexpr double max_load_factor_ = 0.75;
+
+    std::size_t hash(const Key& key) const { return std::hash<Key> { }(key); }
+
+    static std::size_t vec_size(const std::size_t bucket_count, const double load_factor)
+    {
+        return static_cast<std::size_t>(
+            std::ceil(static_cast<double>(bucket_count) * load_factor));
+    }
+
+    void check_load_factor()
+    {
+        if (static_cast<double>(size_) / static_cast<double>(bucket_count_) >= max_load_factor_) {
+            bucket_count_ *= 2;
+            rehash();
+        }
+    }
+
+    void set_impl(const Key& k, const Value& v)
+    {
+        const std::size_t bucketIdx = hash(k) % bucket_count_;
+        std::size_t idx = bucket_heads_[bucketIdx];
+
+        if (idx == npos) {
+            idx = size_++;
+            bucket_heads_[bucketIdx] = idx;
             items[idx].key = k;
             items[idx].value = v;
             items[idx].used = true;
-            storedItems++;
             return;
         }
 
@@ -47,93 +90,44 @@ struct DenseMap {
                 return;
             }
 
-            if (node.nextIdx == -1) {
+            if (node.nextIdx == npos) {
                 break;
             }
 
             idx = node.nextIdx;
         }
         Node& tail = items[idx];
-        int newIdx = ++lastUsedIdx;
+        const std::size_t newIdx = size_++;
 
         tail.nextIdx = newIdx;
         items[newIdx].key = k;
         items[newIdx].value = v;
         items[newIdx].used = true;
-        storedItems++;
     }
-
-    void set(const Key& k, const Value& v)
-    {
-        check_load_factor();
-        _set(k, v);
-    }
-
-    void check_load_factor()
-    {
-        if (static_cast<float>(storedItems) / nBuckets >= loadFactor) {
-            printf("here");
-            this->nBuckets *= 2;
-            rehash();
-            // each bucket has, on average items.size()/nBuckets
-            // if items.size()/nBuckets >= loadFactorThreshold, nBuckets *= 2
-            // initial conditions : each buckets size is loadFactor so we initialize items with nBuckets*loadFactor size
-        }
-    }
-
-    [[nodiscard]] Value get(const Key& k) const
-    {
-        const int bucketIdx = hash(k) % nBuckets;
-        int idx = bucketToStartIdx[bucketIdx];
-
-        while (idx != -1) {
-            const Node& node = items[idx];
-            if (node.key == k && node.used) {
-                return node.value;
-            }
-            idx = node.nextIdx;
-        }
-        throw std::runtime_error("Oops");
-    }
-
-    static size_t vec_size(const unsigned int nBuckets, const float loadFactor)
-    {
-        return static_cast<int>(static_cast<float>(nBuckets) * loadFactor);
-    }
-
-private:
-    std::size_t hash(const Key& key) const { return std::hash<Key> { }(key); }
 
     void rehash()
     {
         std::vector<Node> itemsSnapshot;
-        itemsSnapshot.reserve(storedItems);
-        for (auto node : items) {
+        itemsSnapshot.reserve(size_);
+        for (const auto& node : items) {
             if (node.used) {
                 itemsSnapshot.push_back(node);
             }
         }
 
-        items = std::vector<Node>(vec_size(nBuckets, loadFactor));
-        bucketToStartIdx = std::vector<int>(nBuckets);
-        lastUsedIdx = -1;
-        storedItems = 0;
+        items = std::vector<Node>(vec_size(bucket_count_, max_load_factor_));
+        bucket_heads_ = std::vector<std::size_t>(bucket_count_, npos);
+        size_ = 0;
 
-        for (size_t i { }; i < nBuckets; ++i) {
-            bucketToStartIdx[i] = -1;
-        }
-
-        for (auto node : itemsSnapshot) {
-            _set(node.key, node.value);
+        for (const auto& node : itemsSnapshot) {
+            set_impl(node.key, node.value);
         }
     }
 
-    unsigned int nBuckets;
-    float loadFactor;
+    std::size_t bucket_count_;
     std::vector<Node> items;
-    std::vector<int> bucketToStartIdx;
-    int lastUsedIdx = -1;
-    unsigned int storedItems = 0;
+    std::vector<std::size_t> bucket_heads_;
+    std::size_t size_ = 0;
 };
 
 void tests()
@@ -151,12 +145,31 @@ void tests()
     assert(h.get(2) == 4);
     h.set(0, 20);
     assert(h.get(0) == 20);
+
+    bool threw = false;
+
     try {
-        h.get(42);
-    } catch (std::exception& e) {
-        assert(e.what() == std::string("Oops"));
+        [[maybe_unused]] const int& value = h.get(42);
+    } catch (const std::out_of_range&) {
+        threw = true;
     }
-    printf("All tests passed!\n");
+    assert(threw);
+
+    auto small = DenseMap<int, int>(2);
+    small.set(0, 1);
+    small.set(1, 2);
+    assert(small.get(0) == 1);
+    assert(small.get(1) == 2);
+
+    threw = false;
+    try {
+        [[maybe_unused]] auto bad = DenseMap<int, int>(0);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    assert(threw);
+
+    std::puts("All tests passed!");
 }
 
 int main() { tests(); }
