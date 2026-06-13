@@ -13,10 +13,10 @@ struct DenseMap {
         bool used = false;
     };
 
-    DenseMap(unsigned int nBuckets = 4, unsigned int bucket_size = 64)
+    explicit DenseMap(const unsigned int nBuckets = 4)
         : nBuckets { nBuckets }
-        , loadFactor { 0.0f }
-        , items { std::vector<Node>(nBuckets * bucket_size) }
+        , loadFactor { .75f }
+        , items { std::vector<Node>(vec_size(nBuckets, loadFactor)) }
         , bucketToStartIdx { std::vector<int>(nBuckets) }
     {
         for (size_t i { }; i < nBuckets; ++i) {
@@ -24,9 +24,9 @@ struct DenseMap {
         }
     }
 
-    void set(const Key& k, const Value& v)
+    void _set(const Key& k, const Value& v)
     {
-        int bucketIdx = hash(k) % nBuckets;
+        const int bucketIdx = hash(k) % nBuckets;
         int idx = bucketToStartIdx[bucketIdx];
 
         if (idx == -1) {
@@ -35,8 +35,10 @@ struct DenseMap {
             items[idx].key = k;
             items[idx].value = v;
             items[idx].used = true;
+            storedItems++;
             return;
         }
+
         while (true) {
             Node& node = items[idx];
 
@@ -58,11 +60,30 @@ struct DenseMap {
         items[newIdx].key = k;
         items[newIdx].value = v;
         items[newIdx].used = true;
+        storedItems++;
     }
 
-    Value get(const Key& k) const
+    void set(const Key& k, const Value& v)
     {
-        int bucketIdx = hash(k) % nBuckets;
+        check_load_factor();
+        _set(k, v);
+    }
+
+    void check_load_factor()
+    {
+        if (static_cast<float>(storedItems) / nBuckets >= loadFactor) {
+            printf("here");
+            this->nBuckets *= 2;
+            rehash();
+            // each bucket has, on average items.size()/nBuckets
+            // if items.size()/nBuckets >= loadFactorThreshold, nBuckets *= 2
+            // initial conditions : each buckets size is loadFactor so we initialize items with nBuckets*loadFactor size
+        }
+    }
+
+    [[nodiscard]] Value get(const Key& k) const
+    {
+        const int bucketIdx = hash(k) % nBuckets;
         int idx = bucketToStartIdx[bucketIdx];
 
         while (idx != -1) {
@@ -75,14 +96,44 @@ struct DenseMap {
         throw std::runtime_error("Oops");
     }
 
-    std::size_t hash(const Key& key) const { return std::hash<Key> { }(key); }
+    static size_t vec_size(const unsigned int nBuckets, const float loadFactor)
+    {
+        return static_cast<int>(static_cast<float>(nBuckets) * loadFactor);
+    }
 
 private:
-    std::vector<Node> items;
-    std::vector<int> bucketToStartIdx;
+    std::size_t hash(const Key& key) const { return std::hash<Key> { }(key); }
+
+    void rehash()
+    {
+        std::vector<Node> itemsSnapshot;
+        itemsSnapshot.reserve(storedItems);
+        for (auto node : items) {
+            if (node.used) {
+                itemsSnapshot.push_back(node);
+            }
+        }
+
+        items = std::vector<Node>(vec_size(nBuckets, loadFactor));
+        bucketToStartIdx = std::vector<int>(nBuckets);
+        lastUsedIdx = -1;
+        storedItems = 0;
+
+        for (size_t i { }; i < nBuckets; ++i) {
+            bucketToStartIdx[i] = -1;
+        }
+
+        for (auto node : itemsSnapshot) {
+            _set(node.key, node.value);
+        }
+    }
+
     unsigned int nBuckets;
     float loadFactor;
+    std::vector<Node> items;
+    std::vector<int> bucketToStartIdx;
     int lastUsedIdx = -1;
+    unsigned int storedItems = 0;
 };
 
 void tests()
@@ -94,6 +145,7 @@ void tests()
     h.set(2, 4);
     h.set(3, 8);
     h.set(4, 16);
+    h.set(9, 32);
     assert(h.get(0) == 1);
     assert(h.get(1) == 2);
     assert(h.get(2) == 4);
